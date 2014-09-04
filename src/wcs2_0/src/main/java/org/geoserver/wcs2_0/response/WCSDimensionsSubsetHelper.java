@@ -31,9 +31,9 @@ import org.geoserver.catalog.CoverageInfo;
 import org.geoserver.catalog.DimensionInfo;
 import org.geoserver.catalog.ResourceInfo;
 import org.geoserver.catalog.util.ReaderDimensionsAccessor;
-
 import org.geoserver.wcs2_0.GetCoverage;
 import org.geoserver.wcs2_0.GridCoverageRequest;
+import org.geoserver.wcs2_0.WCSEnvelope;
 import org.geoserver.wcs2_0.exception.WCS20Exception;
 import org.geoserver.wcs2_0.response.DimensionBean.DimensionType;
 import org.geoserver.wcs2_0.util.EnvelopeAxesLabelsMapper;
@@ -51,6 +51,8 @@ import org.geotools.geometry.jts.JTS;
 import org.geotools.geometry.jts.ReferencedEnvelope;
 import org.geotools.referencing.CRS;
 import org.geotools.referencing.crs.DefaultGeographicCRS;
+import org.geotools.renderer.crs.ProjectionHandler;
+import org.geotools.renderer.crs.ProjectionHandlerFinder;
 import org.geotools.util.DateRange;
 import org.geotools.util.NumberRange;
 import org.geotools.util.Utilities;
@@ -65,10 +67,9 @@ import org.opengis.geometry.MismatchedDimensionException;
 import org.opengis.referencing.FactoryException;
 import org.opengis.referencing.crs.CoordinateReferenceSystem;
 import org.opengis.referencing.datum.PixelInCell;
-import org.opengis.referencing.operation.MathTransform;
 import org.opengis.referencing.operation.TransformException;
-import org.vfny.geoserver.util.WCSUtils;
 
+import com.vividsolutions.jts.geom.Envelope;
 import com.vividsolutions.jts.geom.Geometry;
 import com.vividsolutions.jts.geom.Polygon;
 
@@ -189,26 +190,38 @@ public class WCSDimensionsSubsetHelper {
      * @param subsettingCRS
      * @return
      */
-    private GeneralEnvelope extractSubsettingEnvelope() {
+    private WCSEnvelope extractSubsettingEnvelope() {
 
         //default envelope in subsettingCRS
-        final CoordinateReferenceSystem sourceCRS=reader.getCoordinateReferenceSystem();
-        GeneralEnvelope sourceEnvelopeInSubsettingCRS=new GeneralEnvelope(reader.getOriginalEnvelope());
-        sourceEnvelopeInSubsettingCRS.setCoordinateReferenceSystem(sourceCRS);
-        if(!(subsettingCRS==null||CRS.equalsIgnoreMetadata(subsettingCRS,sourceCRS))){
+        final CoordinateReferenceSystem sourceCRS = reader.getCoordinateReferenceSystem();
+        WCSEnvelope sourceEnvelopeInSubsettingCRS = new WCSEnvelope(reader.getOriginalEnvelope());
+        if (!(subsettingCRS == null || CRS.equalsIgnoreMetadata(subsettingCRS, sourceCRS))) {
             // reproject source envelope to subsetting crs for initialization
             try {
-                sourceEnvelopeInSubsettingCRS= CRS.transform(
-                        CRS.findMathTransform(reader.getCoordinateReferenceSystem(), subsettingCRS), 
-                        reader.getOriginalEnvelope());
-                sourceEnvelopeInSubsettingCRS.setCoordinateReferenceSystem(subsettingCRS);
+                sourceEnvelopeInSubsettingCRS = new WCSEnvelope(CRS.transform(
+                        reader.getOriginalEnvelope(), subsettingCRS));
             } catch (Exception e) {
-                final WCS20Exception exception= new WCS20Exception(
-                        "Unable to initialize subsetting envelope",
-                        WCS20Exception.WCS20ExceptionCode.SubsettingCrsNotSupported,
-                        subsettingCRS.toWKT()); // TODO extract code
-                exception.initCause(e);
-                throw exception;
+                try {
+                    // see if we can get a valid restricted area using the projection handlers
+                    ProjectionHandler handler = ProjectionHandlerFinder.getHandler(
+                            new ReferencedEnvelope(0, 1, 0, 1, subsettingCRS), sourceCRS, false);
+                    if (handler != null) {
+                        ReferencedEnvelope validArea = handler.getValidAreaBounds();
+                        Envelope intersection = validArea.intersection(ReferencedEnvelope
+                                .reference(reader.getOriginalEnvelope()));
+                        ReferencedEnvelope re = new ReferencedEnvelope(intersection, sourceCRS);
+                        sourceEnvelopeInSubsettingCRS = new WCSEnvelope(re.transform(subsettingCRS,
+                                true));
+                    } else {
+                        throw new WCS20Exception("Unable to initialize subsetting envelope",
+                                WCS20Exception.WCS20ExceptionCode.SubsettingCrsNotSupported,
+                                subsettingCRS.toWKT(), e); // TODO extract code
+                    }
+                } catch (Exception e2) {
+                    throw new WCS20Exception("Unable to initialize subsetting envelope",
+                            WCS20Exception.WCS20ExceptionCode.SubsettingCrsNotSupported,
+                            subsettingCRS.toWKT(), e2); // TODO extract code
+                }
             } 
         }
 
@@ -231,8 +244,7 @@ public class WCSDimensionsSubsetHelper {
         
         // === parse dimensions 
         // the subsetting envelope is initialized with the source envelope in subsetting CRS
-        GeneralEnvelope subsettingEnvelope = new GeneralEnvelope(sourceEnvelopeInSubsettingCRS);  
-        subsettingEnvelope.setCoordinateReferenceSystem(subsettingCRS);
+        WCSEnvelope subsettingEnvelope = new WCSEnvelope(sourceEnvelopeInSubsettingCRS);
 
         Set<String> dimensionKeys = enabledDimensions.keySet();
         for (DimensionSubsetType dim : requestedDimensions){
@@ -289,17 +301,15 @@ public class WCSDimensionsSubsetHelper {
                 final double low = Double.parseDouble(trim.getTrimLow());
                 final double high = Double.parseDouble(trim.getTrimHigh());
 
-                // low > high???
-                if (low > high) {
-                    throw new WCS20Exception(
-                            "Low greater than High", 
-                            WCS20Exception.WCS20ExceptionCode.InvalidSubsetting,
-                            trim.getTrimLow());
-                }
-
                 final int axisIndex = envelopeDimensionsMapper.getAxisIndex(sourceEnvelopeInSubsettingCRS, dimension);
                 if (axisIndex < 0) {
                     throw new WCS20Exception("Invalid axis provided",WCS20Exception.WCS20ExceptionCode.InvalidAxisLabel,dimension);
+                }
+                
+                // low > high && not dateline wrapping?
+                if (low > high && !subsettingEnvelope.isLongitude(axisIndex)) {
+                    throw new WCS20Exception("Low greater than High",
+                            WCS20Exception.WCS20ExceptionCode.InvalidSubsetting, trim.getTrimLow());
                 }
 
                 // notice how we choose the order of the axes
@@ -335,61 +345,64 @@ public class WCSDimensionsSubsetHelper {
             }
         }
 
+        // make sure we have not been requested to subset outside of the source CRS
+        subsettingEnvelope.intersect(new GeneralEnvelope(sourceEnvelopeInSubsettingCRS));
+
+        if (subsettingEnvelope.isEmpty()) {
+            throw new WCS20Exception("Empty intersection after subsetting",
+                    WCS20Exception.WCS20ExceptionCode.InvalidSubsetting, "");// TODO spit our
+                                                                             // envelope trimmed
+        }
+
+        // return the subsetting envelope in the CRS it was specified into, to
+        // allow projection handlers to handle dateline crossing
+        return subsettingEnvelope;
+
         //
         // intersect with original envelope to make sure the subsetting is valid
         //
-        GeneralEnvelope sourceEnvelope = reader.getOriginalEnvelope();
+        // GeneralEnvelope sourceEnvelope = reader.getOriginalEnvelope();
 
         // reproject envelope  to native crs for cropping
-        try {
-            if(!CRS.equalsIgnoreMetadata(subsettingEnvelope.getCoordinateReferenceSystem(), reader.getOriginalEnvelope())){
-                // look for transform
-                final MathTransform mathTransform = CRS.findMathTransform(subsettingCRS,sourceCRS);
-                if(!mathTransform.isIdentity()){ // do we really need to reproject?
-                final GeneralEnvelope subsettingEnvelopeInSourceCRS = CRS.transform(
-                            mathTransform, 
-                            subsettingEnvelope);
-                    subsettingEnvelopeInSourceCRS.setCoordinateReferenceSystem(sourceCRS);
+        // try {
+        // if(!CRS.equalsIgnoreMetadata(subsettingEnvelope.getCoordinateReferenceSystem(),
+        // reader.getOriginalEnvelope())){
+        // // look for transform
+        // if (!CRS.equalsIgnoreMetadata(subsettingCRS, sourceCRS)) {
+        // final GeneralEnvelope subsettingEnvelopeInSourceCRS = CRS.transform(
+        // subsettingEnvelope, sourceCRS);
+        //
+        // // intersect
+        // subsettingEnvelopeInSourceCRS.intersect(sourceEnvelope);
+        //
+        // // provided trim extent does not intersect coverage envelope
+        // if (subsettingEnvelopeInSourceCRS.isEmpty()) {
+        // throw new WCS20Exception(
+        // "Empty intersection after subsetting",
+        // WCS20Exception.WCS20ExceptionCode.InvalidSubsetting,"");// TODO spit our envelope trimmed
+        // }
+        // return new WCSEnvelope(subsettingEnvelopeInSourceCRS);
+        // }
+        // }
+        // // we are reprojecting
+        // subsettingEnvelope.intersect(sourceEnvelope);
+        //
+        // // provided trim extent does not intersect coverage envelope
+        // if(subsettingEnvelope.isEmpty()){
+        // throw new WCS20Exception(
+        // "Empty intersection after subsetting",
+        // WCS20Exception.WCS20ExceptionCode.InvalidSubsetting,"");// TODO spit our envelope trimmed
+        // }
+        // return new WCSEnvelope(subsettingEnvelope);
+        // } catch (TransformException e) {
+        // final WCS20Exception exception= new WCS20Exception(
+        // "Unable to initialize subsetting envelope",
+        // WCS20Exception.WCS20ExceptionCode.SubsettingCrsNotSupported,
+        // subsettingCRS.toWKT()); // TODO extract code
+        // exception.initCause(e);
+        // throw exception;
+        // }
 
-                    // intersect
-                    subsettingEnvelopeInSourceCRS.intersect(sourceEnvelope);
-                    subsettingEnvelopeInSourceCRS.setCoordinateReferenceSystem(sourceCRS);
-
-                    // provided trim extent does not intersect coverage envelope
-                    if(subsettingEnvelopeInSourceCRS.isEmpty()){
-                        throw new WCS20Exception(
-                                "Empty intersection after subsetting", 
-                                WCS20Exception.WCS20ExceptionCode.InvalidSubsetting,"");// TODO spit our envelope trimmed
-                    }
-                    return subsettingEnvelopeInSourceCRS;
-                }
-            }
-            // we are reprojecting
-            subsettingEnvelope.intersect(sourceEnvelope);
-            subsettingEnvelope.setCoordinateReferenceSystem(reader.getCoordinateReferenceSystem());      
-
-            // provided trim extent does not intersect coverage envelope
-            if(subsettingEnvelope.isEmpty()){
-                throw new WCS20Exception(
-                        "Empty intersection after subsetting", 
-                        WCS20Exception.WCS20ExceptionCode.InvalidSubsetting,"");// TODO spit our envelope trimmed
-            }
-            return subsettingEnvelope;
-        } catch (FactoryException e) {
-            final WCS20Exception exception= new WCS20Exception(
-                    "Unable to initialize subsetting envelope",
-                    WCS20Exception.WCS20ExceptionCode.SubsettingCrsNotSupported,
-                    subsettingCRS.toWKT()); // TODO extract code
-            exception.initCause(e);
-            throw exception;
-        } catch (TransformException e) {
-            final WCS20Exception exception= new WCS20Exception(
-                    "Unable to initialize subsetting envelope",
-                    WCS20Exception.WCS20ExceptionCode.SubsettingCrsNotSupported,
-                    subsettingCRS.toWKT()); // TODO extract code
-            exception.initCause(e);
-            throw exception;
-        } 
     }
 
     /**
@@ -841,7 +854,7 @@ public class WCSDimensionsSubsetHelper {
      * @throws IOException
      */
     public GridCoverageRequest createGridCoverageRequestSubset() throws IOException {
-        final GeneralEnvelope spatialSubset = extractSubsettingEnvelope();
+        final WCSEnvelope spatialSubset = extractSubsettingEnvelope();
         assert spatialSubset != null && !spatialSubset.isEmpty();
         
         Map<String, List<Object>> dimensionsSubset = null;
@@ -869,7 +882,7 @@ public class WCSDimensionsSubsetHelper {
         subsettingRequest.setFilter(request.getFilter());
 
         // Handle default values and update subsetting values if needed
-        String coverageName =  coverageInfo.getNativeCoverageName() != null ? coverageInfo.getNativeCoverageName() : reader.getGridCoverageNames()[0];
+        String coverageName =  getCoverageName();
         //TODO consider dealing with the Format instance instead of a String parsing or check against WCSUtils.isSupportedMDOutputFormat(String).
         if (!GetCoverage.formatSupportMDOutput(request.getFormat())) {
 
@@ -881,10 +894,23 @@ public class WCSDimensionsSubsetHelper {
 
         return subsettingRequest;
     }
-    
+
+    /**
+     * Return the coverageName for the underlying {@link CoverageInfo} by accessing the nativeCoverageName if available.
+     * Since the nativeCoverageName may be null for single coverage formats we get the first grid coverage name from 
+     * the reader as backup.
+     * 
+     * @return
+     * @throws IOException
+     */
+    private String getCoverageName() throws IOException {
+        final String nativeName = coverageInfo.getNativeCoverageName();
+        return (nativeName != null ? nativeName : reader.getGridCoverageNames()[0]);
+    }
+
     /**
      * Split the current GridCoverageRequest by creating a list of new GridCoverageRequests: A query will be performed
-     * with the current specified subsets, returnin N granules (if any).
+     * with the current specified subsets, returning N granules (if any).
      * Then new N GridCoverageRequests will be created (one for each granule) having subsets setup on top
      * of the specific values of the dimensions for that N-th granule.
      * 
@@ -909,7 +935,7 @@ public class WCSDimensionsSubsetHelper {
         }
 
         // Getting the granule source
-        final String coverageName = coverageInfo.getName();
+        final String coverageName = getCoverageName();
         
         final GranuleSource source = structuredReader.getGranules(coverageName, true);
         if (source == null) {
@@ -924,25 +950,36 @@ public class WCSDimensionsSubsetHelper {
         final SimpleFeatureCollection collection = source.getGranules(query);
         final SimpleFeatureIterator iterator = collection.features();
         final List<GridCoverageRequest> requests = new ArrayList<GridCoverageRequest>();
-        while (iterator.hasNext()) {
+        try {
+            while (iterator.hasNext()) {
+                final SimpleFeature feature = iterator.next();
 
-            final SimpleFeature feature = iterator.next();
+                // Prepare subRequest setting up dimensions matching the values of the current granule
+                final GridCoverageRequest subRequest = new GridCoverageRequest();
 
-            // Prepare subRequest setting up dimensions matching the values of the current granule
-            final GridCoverageRequest subRequest = new GridCoverageRequest();
+                // Setting up constant elements (outputCRS, spatial subset, interpolation
+                subRequest.setOutputCRS(gridCoverageRequest.getOutputCRS());
+                subRequest.setSpatialInterpolation(gridCoverageRequest.getSpatialInterpolation());
+                subRequest.setSpatialSubset(gridCoverageRequest.getSpatialSubset());
+                subRequest.setTemporalInterpolation(gridCoverageRequest.getTemporalInterpolation());
 
-            // Setting up constant elements (outputCRS, spatial subset, interpolation
-            subRequest.setOutputCRS(gridCoverageRequest.getOutputCRS());
-            subRequest.setSpatialInterpolation(gridCoverageRequest.getSpatialInterpolation());
-            subRequest.setSpatialSubset(gridCoverageRequest.getSpatialSubset());
-            subRequest.setTemporalInterpolation(gridCoverageRequest.getTemporalInterpolation());
-
-            //Setting up specific dimensions subset
-            updateDimensions(subRequest, feature, structuredReader, coverageName);
-            requests.add(subRequest);
-
+                //Setting up specific dimensions subset
+                updateDimensions(subRequest, feature, structuredReader, coverageName);
+                requests.add(subRequest);
+            }
+        } finally {
+            iterator.close();
         }
         return requests;
+    }
+
+    public Set<GridCoverageRequest> splitRequestToSet() throws MismatchedDimensionException, UnsupportedOperationException, IOException, TransformException, FactoryException {
+        List<GridCoverageRequest> list = splitRequest();
+        Set<GridCoverageRequest> set = new HashSet<GridCoverageRequest>();
+        for (GridCoverageRequest request : list) {
+            set.add(request);
+        }
+        return set;
     }
 
     /**
@@ -1043,7 +1080,7 @@ public class WCSDimensionsSubsetHelper {
         // elevation subset
         filter = filterElevation(filter, gcr, coverageName, reader);
 
-        //TODO: parse dimensionsSubset
+        // dimensionsSubset
         filter = filterDimensions(filter, gcr, coverageName, reader);
 
         Query query = new Query(null, filter);
@@ -1052,7 +1089,7 @@ public class WCSDimensionsSubsetHelper {
 
     private Filter filterSpatial(GridCoverageRequest gcr,
             StructuredGridCoverage2DReader reader, GranuleSource source) throws IOException, MismatchedDimensionException, TransformException, FactoryException {
-        GeneralEnvelope envelope = gcr.getSpatialSubset();
+        WCSEnvelope envelope = gcr.getSpatialSubset();
         Polygon llPolygon = JTS.toGeometry(new ReferencedEnvelope(envelope));
         GeometryDescriptor geom = source.getSchema().getGeometryDescriptor();
         PropertyName geometryProperty = ff.property(geom.getLocalName());
@@ -1158,7 +1195,7 @@ public class WCSDimensionsSubsetHelper {
         
         if (dimensionValues != null && !dimensionValues.isEmpty()) {
             // Note that currently, dimensionValues only contain one element (slicing specifies a single value for a dimension)
-            Object element = (Object) dimensionValues.get(0);
+            Object element = dimensionValues.get(0);
             Object min = null;
             Object max = null;
             if (element instanceof DateRange) { 
@@ -1267,7 +1304,7 @@ public class WCSDimensionsSubsetHelper {
     private DimensionBean setupDimensionBean(StructuredGridCoverage2DReader structuredReader, String dimensionID) throws IOException {
         Utilities.ensureNonNull("structuredReader", structuredReader);
         // Retrieve the proper dimension descriptor
-        final String coverageName = coverageInfo.getName();
+        final String coverageName = getCoverageName();
         final DimensionDescriptor descriptor = WCSDimensionsHelper.getDimensionDescriptor(structuredReader, coverageName, dimensionID);
         if (descriptor == null) {
            if (LOGGER.isLoggable(Level.FINE)) {

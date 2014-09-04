@@ -11,7 +11,7 @@
   <parent>
     <groupId>org.geoserver</groupId>
     <artifactId>extension</artifactId>
-    <version>2.5-SNAPSHOT</version>
+    <version>2.7-SNAPSHOT</version>
   </parent>
 
   <groupId>org.geoserver.extension</groupId>
@@ -32,7 +32,7 @@
       <dependencies>
         <dependency>
           <groupId>com.microsoft</groupId>
-          <artifactId>sqljdbc</artifactId>
+          <artifactId>sqljdbc4</artifactId>
           <version>${sqlServerDriverVersion}</version>
         </dependency>
       </dependencies>

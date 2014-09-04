@@ -365,6 +365,7 @@ public class MockCatalogBuilder {
     
         final CoverageInfo c = createNiceMock(CoverageInfo.class);
         coverages.add(c);
+        final List<CoverageInfo> coverageList = coverages;
     
         if (srs == null) {
             srs = real.getSRS();
@@ -397,6 +398,7 @@ public class MockCatalogBuilder {
         //    .andReturn(ft).anyTimes();
     
         //expect(catalog.getCoverageByStore(cs, name)).andReturn(c).anyTimes();
+        expect(catalog.getCoveragesByStore(cs)).andReturn(coverageList).anyTimes();
         expect(catalog.getCoverageByCoverageStore(cs, name)).andReturn(c).anyTimes();
     
         c.accept((CatalogVisitor)anyObject());
@@ -512,7 +514,8 @@ public class MockCatalogBuilder {
         }
         
         String sId = newId();
-        Version version = Styles.Handler.SLD_10.getVersion();
+        String format = SLDHandler.FORMAT;
+        Version version = SLDHandler.VERSION_10;
     
         final StyleInfo s = createNiceMock(StyleInfo.class);
         styles.add(s);
@@ -522,8 +525,8 @@ public class MockCatalogBuilder {
         expect(s.getFilename()).andReturn(filename).anyTimes();
         expect(s.getSLDVersion()).andReturn(version).anyTimes();
         try {
-            expect(s.getStyle()).andReturn(Styles.style(Styles.parse(
-                getClass().getResourceAsStream(filename), null, version))).anyTimes();
+            expect(s.getStyle()).andReturn(Styles.style(new SLDHandler().parse(
+                getClass().getResourceAsStream(filename), version, null, null))).anyTimes();
         }
         catch(IOException e) {
             throw new RuntimeException(e);

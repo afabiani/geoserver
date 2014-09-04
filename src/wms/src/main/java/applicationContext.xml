@@ -314,6 +314,11 @@
 	<bean id="getStylesKvpReader" class="org.geoserver.sld.GetStylesKvpRequestReader">
 		<constructor-arg ref="wms"/> 
 	</bean>
+  
+    <bean id="scaleMethodKvpReader" class="org.geoserver.ows.kvp.EnumKvpParser">
+       <constructor-arg value="scaleMethod"/>
+       <constructor-arg value="org.geoserver.wms.ScaleComputationMethod"/>
+    </bean>
 		
 	<!-- xml request readers -->
     <bean id="wmsCapabilitiesXmlReader" 
@@ -673,6 +678,7 @@
      <property name="mappings">
        <props>
         <prop key="/openlayers/**">classpathPublisher</prop>
+        <prop key="/openlayers3/**">classpathPublisher</prop>
         <prop key="/options.png">classpathPublisher</prop>
        </props>
      </property>
@@ -691,4 +697,63 @@
   </bean>
   <bean id="wmsLayerIdentifier" class="org.geoserver.wms.featureinfo.WMSLayerIdentifier"/>
     
+    
+  <!-- Dimension default value factory -->  
+  <bean id="dimensionDefaultValueStrategyFactory" class="org.geoserver.wms.dimension.impl.DimensionDefaultValueSelectionStrategyFactoryImpl">
+    <property name="featureTimeMinimumStrategy">
+      <bean class="org.geoserver.wms.dimension.impl.FeatureMinimumValueSelectionStrategyImpl"/>
+    </property>
+    <property name="featureTimeMaximumStrategy">
+      <bean class="org.geoserver.wms.dimension.impl.FeatureMaximumValueSelectionStrategyImpl"/>
+    </property>    
+    <property name="coverageTimeMinimumStrategy">
+      <bean class="org.geoserver.wms.dimension.impl.CoverageMinimumValueSelectionStrategyImpl"/>
+    </property>
+    <property name="coverageTimeMaximumStrategy">
+      <bean class="org.geoserver.wms.dimension.impl.CoverageMaximumValueSelectionStrategyImpl"/>
+    </property>
+    
+    <property name="featureElevationMinimumStrategy">
+      <bean class="org.geoserver.wms.dimension.impl.FeatureMinimumValueSelectionStrategyImpl"/>
+    </property>
+    <property name="featureElevationMaximumStrategy">
+      <bean class="org.geoserver.wms.dimension.impl.FeatureMaximumValueSelectionStrategyImpl"/>
+    </property>
+     <property name="coverageElevationMinimumStrategy">
+      <bean class="org.geoserver.wms.dimension.impl.CoverageMinimumValueSelectionStrategyImpl"/>
+    </property>
+    <property name="coverageElevationMaximumStrategy">
+      <bean class="org.geoserver.wms.dimension.impl.CoverageMaximumValueSelectionStrategyImpl"/>
+    </property>
+    
+    <property name="featureCustomDimensionMinimumStrategy">
+      <bean class="org.geoserver.wms.dimension.impl.FeatureMinimumValueSelectionStrategyImpl"/>
+    </property>
+    <property name="featureCustomDimensionMaximumStrategy">
+      <bean class="org.geoserver.wms.dimension.impl.FeatureMaximumValueSelectionStrategyImpl"/>
+    </property>
+    <property name="coverageCustomDimensionMinimumStrategy">
+      <bean class="org.geoserver.wms.dimension.impl.CoverageMinimumValueSelectionStrategyImpl"/>
+    </property>
+    <property name="coverageCustomDimensionMaximumStrategy">
+      <bean class="org.geoserver.wms.dimension.impl.CoverageMaximumValueSelectionStrategyImpl"/>
+    </property>
+    
+    <property name="featureNearestValueStrategyFactory">
+      <bean class="org.geoserver.wms.dimension.DefaultFeatureNearestValueSelectionStrategyFactory"/>
+    </property>
+    <property name="coverageNearestValueStrategyFactory">
+      <bean class="org.geoserver.wms.dimension.DefaultCoverageNearestValueSelectionStrategyFactory"/>
+    </property>
+    
+    <property name="fixedValueStrategyFactory">
+      <bean class="org.geoserver.wms.dimension.DefaultFixedValueStrategyFactory"/>
+    </property>    
+  </bean>
+  
+  <bean id="legendSample" class="org.geoserver.wms.capabilities.LegendSampleImpl">
+    <constructor-arg ref="catalog"/>
+    <constructor-arg ref="resourceLoader"/>
+  </bean>
+  
 </beans>

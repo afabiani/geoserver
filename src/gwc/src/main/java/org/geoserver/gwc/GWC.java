@@ -147,6 +147,7 @@ import com.vividsolutions.jts.geom.Polygon;
 public class GWC implements DisposableBean, InitializingBean, ApplicationContextAware {
 
     private static final String GLOBAL_LOCK_KEY = "global";
+    public static final String WORKSPACE_PARAM = "WORKSPACE";
 
     /**
      * @see #get()
@@ -994,6 +995,21 @@ public class GWC implements DisposableBean, InitializingBean, ApplicationContext
         DiskQuotaMonitor diskQuotaMonitor = getDiskQuotaMonitor();
         return diskQuotaMonitor.isEnabled();
     }
+    
+    /**
+     * Returns whether the disk quota module is enabled at all.
+     * <p>
+     * If not, none of the other diskquota related methods should be even called. The disk quota
+     * module may have been completely disabled through the {@code GWC_DISKQUOTA_DISABLED=true}
+     * environment variable
+     * </p>
+     * 
+     * @return whether the disk quota module is available at all.
+     */
+    public boolean isDiskQuotaEnabled() {
+        DiskQuotaMonitor diskQuotaMonitor = getDiskQuotaMonitor();
+        return diskQuotaMonitor.getConfig().isEnabled();
+    }
 
     /**
      * @return the current DiskQuota configuration or {@code null} if the disk quota module has been
@@ -1140,13 +1156,42 @@ public class GWC implements DisposableBean, InitializingBean, ApplicationContext
      */
     public Resource dispatchOwsRequest(final Map<String, String> params, Cookie[] cookies)
             throws Exception {
-
-        FakeHttpServletRequest req = new FakeHttpServletRequest(params, cookies);
+        
+        // If the WORKSPACE parameter is set, remove it and use it to set the workspace of the request
+        String workspace = params.remove(WORKSPACE_PARAM);
+        
+        FakeHttpServletRequest req = new FakeHttpServletRequest(params, cookies, workspace);
         FakeHttpServletResponse resp = new FakeHttpServletResponse();
 
         owsDispatcher.handleRequest(req, resp);
         return new ByteArrayResource(resp.getBytes());
     }
+    
+    public void proxyOwsRequest(ConveyorTile tile) throws Exception {
+        HttpServletRequest actualRequest = tile.servletReq;
+        
+        // get the param map and force service to be WMS if missing
+        Map<String, String> parameterMap = new HashMap<String, String>();
+        Map<String, String[]> params = actualRequest.getParameterMap();
+        boolean hasService = false;
+        for (Map.Entry<String, String[]> param: params.entrySet()) {
+            String key = param.getKey();
+            String value = param.getValue()[0];
+            parameterMap.put(key, value);
+            if("service".equalsIgnoreCase(key) && (value == null || value.isEmpty() || !"WMS".equalsIgnoreCase(value))) {
+                throw new GeoWebCacheException("Failed to cascade request, service should be WMS but it was: '" + value + "'");
+            }
+        }
+        if(!hasService) {
+            parameterMap.put("service", "WMS");
+        }
+        
+        // cascade
+        Cookie[] cookies = actualRequest.getCookies();
+        FakeHttpServletRequest request = new FakeHttpServletRequest(parameterMap, cookies);
+        owsDispatcher.handleRequest(request, tile.servletResp);
+    }
+
 
     public GridSetBroker getGridSetBroker() {
         return gridSetBroker;
@@ -1966,4 +2011,5 @@ public class GWC implements DisposableBean, InitializingBean, ApplicationContext
     public void setApplicationContext(ApplicationContext applicationContext) throws BeansException {
         this.applicationContext = applicationContext;
     }
+
 }

@@ -5,8 +5,10 @@
 package org.geoserver.wms.featureinfo;
 
 import java.awt.Color;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 
 import org.geoserver.wms.SymbolizerFilteringVisitor;
@@ -18,6 +20,7 @@ import org.geotools.styling.PolygonSymbolizer;
 import org.geotools.styling.Rule;
 import org.geotools.styling.RuleImpl;
 import org.geotools.styling.Stroke;
+import org.geotools.styling.Style;
 import org.geotools.styling.StyleBuilder;
 import org.opengis.feature.type.FeatureType;
 import org.opengis.feature.type.GeometryDescriptor;
@@ -48,6 +51,8 @@ class FeatureInfoStylePreprocessor extends SymbolizerFilteringVisitor {
     Set<Rule> extraRules = new HashSet<Rule>();
 
     private PropertyName defaultGeometryExpression;
+
+    private boolean addSolidLineSymbolier;
 
     public FeatureInfoStylePreprocessor(FeatureType schema) {
         this.schema = schema;
@@ -125,6 +130,35 @@ class FeatureInfoStylePreprocessor extends SymbolizerFilteringVisitor {
         }
         return gd.getLocalName().equals(pn.getPropertyName());
     }
+    
+    @Override
+    public void visit(Style style) {
+        super.visit(style);
+        Style copy = (Style) pages.peek();
+        // merge the feature type styles sharing the same transformation
+        List<FeatureTypeStyle> featureTypeStyles = copy.featureTypeStyles();
+        List<FeatureTypeStyle> reduced = new ArrayList<FeatureTypeStyle>();
+        FeatureTypeStyle current = null;
+        for (FeatureTypeStyle fts : featureTypeStyles) {
+            if(current == null || !sameTranformation(current.getTransformation(), fts.getTransformation())) {
+                current = fts;
+                reduced.add(current);
+            } else {
+                // flatten, we don't need to draw a pretty picture and having multiple FTS
+                // would result in the feature being returned twice, since we cannot
+                // assume feature ids to be stable either
+                current.rules().addAll(fts.rules());
+            } 
+        }
+        
+        // replace
+        copy.featureTypeStyles().clear();
+        copy.featureTypeStyles().addAll(reduced);
+    }
+
+    private boolean sameTranformation(Expression t1, Expression t2) {
+        return (t1 == null && t2 == null) || t1.equals(t2);
+    }
 
     @Override
     public void visit(FeatureTypeStyle fts) {
@@ -140,8 +174,15 @@ class FeatureInfoStylePreprocessor extends SymbolizerFilteringVisitor {
     public void visit(Rule rule) {
         geometriesOnLineSymbolizer.clear();
         geometriesOnPolygonSymbolizer.clear();
+        addSolidLineSymbolier = false;
         super.visit(rule);
         Rule copy = (Rule) pages.peek();
+        if (addSolidLineSymbolier) {
+            // add also a black line to make sure we get something in output even
+            // if the user clicks in between symbols or dashes
+            LineSymbolizer ls = sb.createLineSymbolizer(Color.BLACK);
+            copy.symbolizers().add(ls);
+        }
         // check all the geometries that are on line, but not on polygon
         geometriesOnLineSymbolizer.removeAll(geometriesOnPolygonSymbolizer);
         for (Expression geom : geometriesOnLineSymbolizer) {
@@ -161,7 +202,9 @@ class FeatureInfoStylePreprocessor extends SymbolizerFilteringVisitor {
                  Filter ruleFilter = copy.getFilter();
                  Filter filter = ruleFilter == null || ruleFilter == Filter.INCLUDE ? geomCheck : ff.and(geomCheck, ruleFilter);
                  RuleImpl extra = new RuleImpl(copy);
+                 extra.setFilter(filter);
                  extra.symbolizers().clear();
+                 extra.symbolizers().add(sb.createPolygonSymbolizer());
                  extraRules.add(extra);
              }
             
@@ -183,9 +226,7 @@ class FeatureInfoStylePreprocessor extends SymbolizerFilteringVisitor {
             float[] dashArray = stroke.getDashArray();
             Graphic graphicStroke = stroke.getGraphicStroke();
             if (graphicStroke != null || dashArray != null && dashArray.length > 0) {
-                // add also a black line to make sure we get something in output even
-                // if the user clicks in between symbols or dashes
-                pages.push(sb.createLineSymbolizer(Color.BLACK));
+                addSolidLineSymbolier = true;
             }
         }
     }

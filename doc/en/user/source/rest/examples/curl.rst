@@ -3,7 +3,9 @@
 cURL
 ====
 
-The examples in this section use `cURL <http://curl.haxx.se/>`_, a command line tool for executing HTTP requests and transferring files, to generate requests to GeoServer’s REST interface. Although the examples are based on cURL, they could be adapted for any HTTP-capable tool or library.
+The examples in this section use `cURL <http://curl.haxx.se/>`_, a command line tool for executing HTTP requests and transferring files, to generate requests to GeoServer's REST interface. Although the examples are based on cURL, they could be adapted for any HTTP-capable tool or library.
+Please be aware, that cURL acts not entirely the same as a web-browser. In contrast to Mozilla Firefox or Google Chrome cURL will not escape special characters in your request-string automatically. To make sure, that your requests can be processed correctly, make sure, that characters like paranthesis, commas and the like are escaped before sending them via cURL.
+If you use libcurl in PHP 5.5 or newer you can prepare the url-string using the function curl_escape. In older versions of PHP hmlspecialchars should do the job also.
 
 .. todo::
 
@@ -665,7 +667,7 @@ The following command uploads a zip file containing the definition of a mosaic (
 
 .. code-block:: console
 
-   curl ­-u admin:geoserver -XPUT ­H "Content­type:application/zip"­--data-binary @polyphemus.zip
+   curl -u admin:geoserver -XPUT -H "Content-type:application/zip" --data-binary @polyphemus.zip
       http://localhost:8080/geoserver/rest/workspaces/topp/coveragestores/polyphemus/file.imagemosaic
 
 The following instead instructs the mosaic to harvest (or re-harvest) a single file into the mosaic, collecting its properties and updating the mosaic index:
@@ -835,7 +837,7 @@ This archive contains the definition of an empty mosaic (no granules in this cas
 
 .. code-block:: console
 
-   curl ­-u admin:geoserver -XPUT -H "Content-type:application/zip" --data-binary @empty.zip
+   curl -u admin:geoserver -XPUT -H "Content-type:application/zip" --data-binary @empty.zip
       http://localhost:8080/geoserver/rest/workspaces/topp/coveragestores/empty/file.imagemosaic?configure=none
 
 The following instead instructs the mosaic to harvest a single :download:`polyphemus_20120401.nc` file into the mosaic, collecting its properties and updating the mosaic index:
@@ -876,3 +878,33 @@ Where coverageconfig.xml may look like this
     </coverage>
 
 .. note:: When specifying only the coverage name, the coverage will be automatically configured
+
+
+Master Password Change
+----------------------
+
+The master password can be fetched wit a GET request.
+
+.. code-block:: console
+
+   curl -v -u admin:geoserver -XGET   http://localhost:8080/geoserver/rest/security/masterpw.xml
+
+A generated master password may be **-"}3a^Kh**. Next step is creating an XML file.
+
+File changes.xml
+
+.. code-block:: xml
+
+   <masterPassword>
+      <oldMasterPassword>-"}3a^Kh</oldMasterPassword>
+      <newMasterPassword>geoserver1</newMasterPassword>
+   </masterPassword>
+
+Changing the master password using the file:
+
+.. code-block:: console
+
+   curl -v -u admin:geoserver -XPUT -H "Content-type: text/xml" -d @change.xml http://localhost:8080/geoserver/rest/security/masterpw.xml
+   
+   
+   

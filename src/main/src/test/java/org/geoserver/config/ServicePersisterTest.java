@@ -4,19 +4,27 @@
  */
 package org.geoserver.config;
 
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 
 import java.io.File;
+import java.io.IOException;
 import java.util.Arrays;
 import java.util.List;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
+import org.apache.commons.io.FileUtils;
 import org.geoserver.catalog.NamespaceInfo;
 import org.geoserver.catalog.WorkspaceInfo;
+import org.geoserver.config.impl.GeoServerImpl;
 import org.geoserver.config.util.XStreamServiceLoader;
 import org.geoserver.data.test.SystemTestData;
 import org.geoserver.platform.GeoServerResourceLoader;
 import org.geoserver.test.GeoServerSystemTestSupport;
 import org.geoserver.test.SystemTest;
+import org.geotools.util.logging.Logging;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.experimental.categories.Category;
@@ -33,18 +41,30 @@ public class ServicePersisterTest extends GeoServerSystemTestSupport {
                 (List) Arrays.asList(new ServiceLoader(getResourceLoader())), geoServer));
     }
 
+    @Override
+    protected void setUpSpring(List<String> springContextLocations) {
+        super.setUpSpring(springContextLocations);
+        springContextLocations
+                .add("classpath*:/org/geoserver/config/ServicePersisterTest-applicationContext.xml");
+    }
+
     @Before
     public void init() {
         geoServer = getGeoServer();
     }
 
     @Before
-    public void removeFooService() {
+    public void removeFooService() throws IOException {
         GeoServer geoServer = getGeoServer();
         WorkspaceInfo ws = getCatalog().getDefaultWorkspace();
         ServiceInfo s = geoServer.getServiceByName(ws, "foo", ServiceInfo.class);
         if (s != null) {
             geoServer.remove(s);
+        }
+
+        File serviceFile = getDataDirectory().findFile("service.xml");
+        if (serviceFile != null) {
+            serviceFile.delete();
         }
     }
 
@@ -73,10 +93,18 @@ public class ServicePersisterTest extends GeoServerSystemTestSupport {
 
         File f = new File(dataDirRoot, "workspaces"+"/"+ws.getName()+"/service.xml");
         assertTrue(f.exists());
-
-        ServiceInfo s = geoServer.getServiceByName(ws, "foo", ServiceInfo.class);
-        geoServer.remove(s);
-        assertFalse(f.exists());
+        
+        Logger logger = Logging.getLogger(GeoServerImpl.class);
+        Level level = logger.getLevel();
+        try {
+            logger.setLevel(Level.OFF);
+            ServiceInfo s = geoServer.getServiceByName(ws, "foo", ServiceInfo.class);
+            geoServer.remove(s);
+            assertFalse(f.exists());
+        }
+        finally {
+            logger.setLevel(level);
+        }
     }
     
     @Test
@@ -100,7 +128,17 @@ public class ServicePersisterTest extends GeoServerSystemTestSupport {
         
     }
 
-    static class ServiceLoader extends XStreamServiceLoader {
+    @Test
+    public void testLoadGibberish() throws Exception {
+        // we should get a log message, but the startup should continue
+        File service = new File(getDataDirectory().getResourceLoader().getBaseDirectory(),
+                "service.xml");
+        FileUtils.writeStringToFile(service, "duDaDa");
+        getGeoServer().reload();
+        assertEquals(0, geoServer.getServices().size());
+    }
+
+    public static class ServiceLoader extends XStreamServiceLoader {
 
         public ServiceLoader(GeoServerResourceLoader resourceLoader) {
             super(resourceLoader, "service");

@@ -11,6 +11,7 @@ import java.io.OutputStreamWriter;
 import java.io.Writer;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -25,16 +26,22 @@ import org.geoserver.catalog.FeatureTypeInfo;
 import org.geoserver.config.GeoServer;
 import org.geoserver.ows.Dispatcher;
 import org.geoserver.ows.Request;
+import org.geoserver.platform.GeoServerExtensions;
 import org.geoserver.platform.Operation;
 import org.geoserver.platform.ServiceException;
 import org.geoserver.wfs.WFSGetFeatureOutputFormat;
 import org.geoserver.wfs.WFSInfo;
 import org.geoserver.wfs.request.FeatureCollectionResponse;
+import org.geoserver.wfs.request.GetFeatureRequest;
 import org.geotools.data.FeatureSource;
 import org.geotools.data.Query;
 import org.geotools.feature.FeatureCollection;
 import org.geotools.feature.FeatureIterator;
 import org.geotools.geometry.jts.ReferencedEnvelope;
+import org.geotools.gml2.SrsSyntax;
+import org.geotools.gml2.bindings.GML2EncodingUtils;
+import org.geotools.referencing.CRS;
+import org.geotools.referencing.CRS.AxisOrder;
 import org.geotools.referencing.NamedIdentifier;
 import org.opengis.feature.Feature;
 import org.opengis.feature.simple.SimpleFeature;
@@ -43,8 +50,10 @@ import org.opengis.feature.type.AttributeDescriptor;
 import org.opengis.feature.type.FeatureType;
 import org.opengis.feature.type.GeometryDescriptor;
 import org.opengis.filter.Filter;
+import org.opengis.referencing.FactoryException;
 import org.opengis.referencing.ReferenceIdentifier;
 import org.opengis.referencing.crs.CoordinateReferenceSystem;
+
 import javax.xml.namespace.QName;
 
 import com.vividsolutions.jts.geom.Geometry;
@@ -103,6 +112,14 @@ public class GeoJSONGetFeatureResponse extends WFSGetFeatureOutputFormat {
         // Generate bounds for every feature?
         WFSInfo wfs = getInfo();
         boolean featureBounding = wfs.isFeatureBounding();
+        
+        // include fid?
+        String id_option = null; // null - default, "" - none, or "property"
+        //GetFeatureRequest request = GetFeatureRequest.adapt(describeFeatureType.getParameters()[0]);
+        Request request = Dispatcher.REQUEST.get();
+        if (request != null) {
+            id_option = JSONType.getIdPolicy( (Map<String,String>) request.getKvp() );
+        }
         // prepare to write out
         OutputStreamWriter osw = null;
         Writer outWriter = null;
@@ -141,10 +158,10 @@ public class GeoJSONGetFeatureResponse extends WFSGetFeatureOutputFormat {
             // including the lockID
             //
             // execute should also fail if all of the locks could not be aquired
-            List resultsList = featureCollection.getFeature();
+            List<FeatureCollection> resultsList = featureCollection.getFeature();
             CoordinateReferenceSystem crs = null;
             for (int i = 0; i < resultsList.size(); i++) {
-                FeatureCollection collection = (FeatureCollection) resultsList.get(i);
+                FeatureCollection collection = resultsList.get(i);
                 FeatureIterator iterator = collection.features();
 
                 
@@ -156,16 +173,32 @@ public class GeoJSONGetFeatureResponse extends WFSGetFeatureOutputFormat {
                         SimpleFeature feature = (SimpleFeature) iterator.next();
                         jsonWriter.object();
                         jsonWriter.key("type").value("Feature");
-                        jsonWriter.key("id").value(feature.getID());
 
                         fType = feature.getFeatureType();
                         types = fType.getAttributeDescriptors();
 
+                        if( id_option == null ){
+                            jsonWriter.key("id").value(feature.getID());
+                        }
+                        else if ( id_option.length() != 0){
+                            Object value = feature.getAttribute(id_option);
+                            jsonWriter.key("id").value(value);
+                        }
+                        
                         GeometryDescriptor defaultGeomType = fType.getGeometryDescriptor();
-
-                        if (crs == null && defaultGeomType != null)
-                            crs = fType.getGeometryDescriptor().getCoordinateReferenceSystem();
-
+                        if(defaultGeomType != null) {
+                            CoordinateReferenceSystem featureCrs =
+                                    defaultGeomType.getCoordinateReferenceSystem();
+                            
+                            jsonWriter.setAxisOrder(CRS.getAxisOrder(featureCrs));
+                            
+                            if (crs == null)
+                                crs = featureCrs;
+                        } else  {
+                            // If we don't know, assume EAST_NORTH so that no swapping occurs
+                            jsonWriter.setAxisOrder(CRS.AxisOrder.EAST_NORTH);
+                        }
+                        
                         jsonWriter.key("geometry");
                         Geometry aGeom = (Geometry) feature.getDefaultGeometry();
 
@@ -195,7 +228,10 @@ public class GeoJSONGetFeatureResponse extends WFSGetFeatureOutputFormat {
                         for (int j = 0; j < types.size(); j++) {
                             Object value = feature.getAttribute(j);
                             AttributeDescriptor ad = types.get(j);
-
+                            
+                            if( id_option != null && id_option.equals(ad.getLocalName()) ){
+                            	continue; // skip this value as it is used as the id
+                            }
                             if (value != null) {
                                 if (value instanceof Geometry) {
                                     // This is an area of the spec where they
@@ -237,29 +273,18 @@ public class GeoJSONGetFeatureResponse extends WFSGetFeatureOutputFormat {
             }
             jsonWriter.endArray(); // end features
 
-            // Coordinate Referense System, currently only if the namespace is
-            // EPSG
-            if (crs != null) {
-                Set<ReferenceIdentifier> ids = crs.getIdentifiers();
-                // WKT defined crs might not have identifiers at all
-                if (ids != null && ids.size() > 0) {
-                    NamedIdentifier namedIdent = (NamedIdentifier) ids.iterator().next();
-                    String csStr = namedIdent.getCodeSpace().toUpperCase();
-
-                    if (csStr.equals("EPSG")) {
-                        jsonWriter.key("crs");
-                        jsonWriter.object();
-                        jsonWriter.key("type").value(csStr);
-                        jsonWriter.key("properties");
-                        jsonWriter.object();
-                        jsonWriter.key("code");
-                        jsonWriter.value(namedIdent.getCode());
-                        jsonWriter.endObject(); // end properties
-                        jsonWriter.endObject(); // end crs
-                    }
+            // Coordinate Referense System
+            try {
+                if ("true".equals(GeoServerExtensions.getProperty("GEOSERVER_GEOJSON_LEGACY_CRS"))){
+                    // This is wrong, but GeoServer used to do it this way.
+                    writeCrsLegacy(jsonWriter, crs);
+                } else {
+                    writeCrs(jsonWriter, crs);
                 }
+            } catch (FactoryException e) {
+                throw (IOException) new IOException("Error looking up crs identifier").initCause(e);
             }
-
+            
             // Bounding box for featurecollection
             if (hasGeom && featureBounding) {
                 ReferencedEnvelope e = null;
@@ -274,6 +299,7 @@ public class GeoJSONGetFeatureResponse extends WFSGetFeatureOutputFormat {
                 }
 
                 if (e != null) {
+                    jsonWriter.setAxisOrder(CRS.getAxisOrder(e.getCoordinateReferenceSystem()));
                     jsonWriter.writeBoundingBox(e);
                 }
             }
@@ -291,6 +317,61 @@ public class GeoJSONGetFeatureResponse extends WFSGetFeatureOutputFormat {
                     + jsonException.getMessage());
             serviceException.initCause(jsonException);
             throw serviceException;
+        }
+    }
+
+    private void writeCrs(final GeoJSONBuilder jsonWriter,
+            CoordinateReferenceSystem crs) throws FactoryException {
+        if (crs != null) {
+            String identifier = CRS.lookupIdentifier(crs, true);
+            // If we get a plain EPSG code, generate a URI as the GeoJSON spec says to 
+            // prefer them.
+            
+            if(identifier.startsWith("EPSG:")) {
+                String code = GML2EncodingUtils.epsgCode(crs);
+                if (code != null) {
+                    identifier = SrsSyntax.OGC_URN.getPrefix() + code;
+                }
+            }
+            jsonWriter.key("crs");
+            jsonWriter.object();
+            jsonWriter.key("type").value("name");
+            jsonWriter.key("properties");
+            jsonWriter.object();
+            jsonWriter.key("name");
+            jsonWriter.value(identifier);
+            jsonWriter.endObject(); // end properties
+            jsonWriter.endObject(); // end crs
+        } else {
+            jsonWriter.key("crs");
+            jsonWriter.value(null);
+        }
+    }
+    
+    // Doesn't follow spec, but GeoServer used to do this.
+    private void writeCrsLegacy(final GeoJSONBuilder jsonWriter,
+            CoordinateReferenceSystem crs) {
+        // Coordinate Referense System, currently only if the namespace is
+        // EPSG
+        if (crs != null) {
+            Set<ReferenceIdentifier> ids = crs.getIdentifiers();
+            // WKT defined crs might not have identifiers at all
+            if (ids != null && ids.size() > 0) {
+                NamedIdentifier namedIdent = (NamedIdentifier) ids.iterator().next();
+                String csStr = namedIdent.getCodeSpace().toUpperCase();
+
+                if (csStr.equals("EPSG")) {
+                    jsonWriter.key("crs");
+                    jsonWriter.object();
+                    jsonWriter.key("type").value(csStr);
+                    jsonWriter.key("properties");
+                    jsonWriter.object();
+                    jsonWriter.key("code");
+                    jsonWriter.value(namedIdent.getCode());
+                    jsonWriter.endObject(); // end properties
+                    jsonWriter.endObject(); // end crs
+                }
+            }
         }
     }
 

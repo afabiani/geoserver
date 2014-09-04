@@ -13,14 +13,14 @@
   <parent>
     <groupId>org.geoserver.extension</groupId>
     <artifactId>gs-dxf</artifactId>
-    <version>2.5-SNAPSHOT</version>
+    <version>2.7-SNAPSHOT</version>
   </parent>
 
   <groupId>org.geoserver.extension</groupId>
   <artifactId>gs-dxf-core</artifactId>
   <packaging>jar</packaging>
-  <version>2.5-SNAPSHOT</version>
-  <name>DXF output format</name>
+  <version>2.7-SNAPSHOT</version>
+  <name>DXF WFS output format</name>
 
     <dependencies>
     <dependency>

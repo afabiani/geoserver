@@ -5,12 +5,15 @@
 package org.geoserver.gwc;
 
 import static org.geoserver.data.test.MockData.BASIC_POLYGONS;
-import static org.geoserver.data.test.MockData.MPOINTS;
 import static org.geoserver.gwc.GWC.tileLayerName;
+import static org.hamcrest.Matchers.equalToIgnoringCase;
+import static org.hamcrest.Matchers.not;
+import static org.hamcrest.Matchers.nullValue;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
@@ -18,9 +21,15 @@ import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 import javax.servlet.http.HttpServletResponse;
+import javax.xml.namespace.QName;
 
 import org.apache.commons.httpclient.util.DateUtil;
 import org.apache.commons.io.FileUtils;
@@ -32,15 +41,19 @@ import org.geoserver.catalog.FeatureTypeInfo;
 import org.geoserver.catalog.LayerGroupInfo;
 import org.geoserver.catalog.LayerInfo;
 import org.geoserver.catalog.ResourceInfo;
+import org.geoserver.catalog.WorkspaceInfo;
 import org.geoserver.config.GeoServerDataDirectory;
 import org.geoserver.data.test.MockData;
 import org.geoserver.data.test.SystemTestData;
+import org.geoserver.data.test.SystemTestData.LayerProperty;
 import org.geoserver.gwc.config.GWCConfig;
 import org.geoserver.gwc.layer.CatalogConfiguration;
 import org.geoserver.gwc.layer.GeoServerTileLayer;
 import org.geoserver.gwc.layer.GeoServerTileLayerInfo;
 import org.geoserver.platform.GeoServerExtensions;
 import org.geoserver.test.GeoServerSystemTestSupport;
+import org.geoserver.test.TestSetup;
+import org.geoserver.test.TestSetupFrequency;
 import org.geowebcache.GeoWebCacheDispatcher;
 import org.geowebcache.GeoWebCacheException;
 import org.geowebcache.GeoWebCacheExtensions;
@@ -50,54 +63,62 @@ import org.geowebcache.diskquota.QuotaStore;
 import org.geowebcache.diskquota.jdbc.JDBCConfiguration;
 import org.geowebcache.diskquota.jdbc.JDBCConfiguration.ConnectionPoolConfiguration;
 import org.geowebcache.diskquota.jdbc.JDBCQuotaStore;
+import org.geowebcache.filter.parameters.StringParameterFilter;
 import org.geowebcache.grid.BoundingBox;
 import org.geowebcache.grid.GridSetBroker;
 import org.geowebcache.grid.GridSubset;
 import org.geowebcache.layer.TileLayer;
 import org.geowebcache.layer.TileLayerDispatcher;
-import org.junit.Before;
+import org.hamcrest.Matchers;
+import org.junit.Assert;
 import org.junit.Test;
 import org.w3c.dom.Document;
 
 import com.mockrunner.mock.web.MockHttpServletRequest;
 import com.mockrunner.mock.web.MockHttpServletResponse;
 
+@TestSetup(run=TestSetupFrequency.REPEAT)
 public class GWCIntegrationTest extends GeoServerSystemTestSupport {
     
     static final String FLAT_LAYER_GROUP = "flatLayerGroup";
     static final String NESTED_LAYER_GROUP = "nestedLayerGroup";
     static final String CONTAINER_LAYER_GROUP = "containerLayerGroup";
+    
+    static final String TEST_WORKSPACE_NAME = "testWorkspace";
+    static final String TEST_WORKSPACE_URI = "http://geoserver.org/GWCIntegerationTest/"+TEST_WORKSPACE_NAME;
+    static final String WORKSPACED_STYLE_NAME = "workspacedStyle";
+    static final String WORKSPACED_STYLE_FILE = "workspacedStyle.sld";
+    static final String WORKSPACED_LAYER = "workspacedLayer";
+    static final QName WORKSPACED_LAYER_QNAME = new QName(TEST_WORKSPACE_URI, WORKSPACED_LAYER, TEST_WORKSPACE_NAME);
 
     @Override
     protected void onSetUp(SystemTestData testData) throws Exception {
         super.onSetUp(testData);
         
-        GWC.get().getConfig().setDirectWMSIntegrationEnabled(false);
-    }
-    
-    @Before
-    public void resetLayers() throws Exception {
-        removeGroup(FLAT_LAYER_GROUP);
-        removeGroup(CONTAINER_LAYER_GROUP);
-        removeGroup(NESTED_LAYER_GROUP);
+        Catalog catalog = getCatalog();
+        testData.addWorkspace(TEST_WORKSPACE_NAME, TEST_WORKSPACE_URI, catalog);
+        WorkspaceInfo wi = catalog.getWorkspaceByName(TEST_WORKSPACE_NAME);
+        testData.addStyle(wi, WORKSPACED_STYLE_NAME, WORKSPACED_STYLE_FILE, this.getClass(), catalog);
         
-        final String layerName = getLayerId(BASIC_POLYGONS);
-        LayerInfo layerInfo = getCatalog().getLayerByName(layerName);
-        if(layerInfo != null) {
-            getCatalog().remove(layerInfo);
-            getGeoServer().reload();
-            
-        }
+        assertThat(catalog.getStyleByName(WORKSPACED_STYLE_NAME), Matchers.describedAs("Style %0 should not be in the global workspace.", (nullValue()), WORKSPACED_STYLE_NAME));
+        assertThat(catalog.getStyleByName(wi, WORKSPACED_STYLE_NAME), Matchers.describedAs("Style %0 should be in workspace %1.", (not(nullValue())), WORKSPACED_STYLE_NAME, TEST_WORKSPACE_NAME));
 
-        revertLayer(BASIC_POLYGONS);
-        revertLayer(MPOINTS);
-    }
-
-    private void removeGroup(String groupName) {
-        LayerGroupInfo lg = getCatalog().getLayerGroupByName(groupName);
-        if(lg != null) {
-            getCatalog().remove(lg);
-        }
+        Map<LayerProperty, Object> props = new HashMap<>();
+        props.put(LayerProperty.STYLE, WORKSPACED_STYLE_NAME);
+        testData.addVectorLayer(WORKSPACED_LAYER_QNAME, props, this.getClass(), catalog);
+        LayerInfo li = catalog.getLayerByName(getLayerId(WORKSPACED_LAYER_QNAME));
+        li.setDefaultStyle(catalog.getStyleByName(wi, WORKSPACED_STYLE_NAME));
+        catalog.save(li);
+        
+        GeoServerTileLayer tl = GWC.get().getTileLayer(li);
+        
+        StringParameterFilter wsFilter = new StringParameterFilter();
+        wsFilter.setKey("WORKSPACE");
+        wsFilter.setDefaultValue("");
+        wsFilter.setValues(Arrays.asList("", TEST_WORKSPACE_NAME));
+        tl.getInfo().addParameterFilter(wsFilter);
+        
+        GWC.get().getConfig().setDirectWMSIntegrationEnabled(false);
     }
 
     @Test 
@@ -106,6 +127,25 @@ public class GWCIntegrationTest extends GeoServerSystemTestSupport {
         MockHttpServletResponse sr = getAsServletResponse("gwc/service/wmts?request=GetTile&layer="
                 + layerId
                 + "&format=image/png&tilematrixset=EPSG:4326&tilematrix=EPSG:4326:0&tilerow=0&tilecol=0");
+        assertEquals(200, sr.getErrorCode());
+        assertEquals("image/png", sr.getContentType());
+    }
+    
+    @Test 
+    public void testWorkspacedStyle() throws Exception {
+        String layerId = String.format("%s:%s", TEST_WORKSPACE_NAME, WORKSPACED_LAYER);
+        MockHttpServletResponse sr = getAsServletResponse("gwc/service/wmts?request=GetTile&layer="
+                + layerId
+                + "&format=image/png&tilematrixset=EPSG:4326&workspace="+TEST_WORKSPACE_NAME+"&tilematrix=EPSG:4326:0&tilerow=0&tilecol=0");
+        assertEquals(200, sr.getErrorCode());
+        assertEquals("image/png", sr.getContentType());
+    }
+    
+    @Test 
+    public void testGetLegendGraphics() throws Exception {
+        String layerId = getLayerId(MockData.BASIC_POLYGONS);
+        MockHttpServletResponse sr = getAsServletResponse("gwc/service/wms?service=wms&version=1.1.1&request=GetLegendGraphic&layer="
+                + layerId + "&style=&format=image/png");
         assertEquals(200, sr.getErrorCode());
         assertEquals("image/png", sr.getContentType());
     }
@@ -366,6 +406,35 @@ public class GWCIntegrationTest extends GeoServerSystemTestSupport {
         assertEquals("image/png", response.getContentType());
         assertEquals(qualifiedName, response.getHeader("geowebcache-layer"));
     }
+    
+    @Test public void testDirectWMSIntegrationWithVirtualServicesAndWorkspacedStyle() throws Exception {
+        final GWC gwc = GWC.get();
+        gwc.getConfig().setDirectWMSIntegrationEnabled(true);
+
+        final String qualifiedName = super.getLayerId(WORKSPACED_LAYER_QNAME);
+        final String localName = WORKSPACED_LAYER_QNAME.getLocalPart();
+
+        final TileLayer tileLayer = gwc.getTileLayerByName(qualifiedName);
+        assertNotNull(tileLayer);
+        boolean directWMSIntegrationEndpoint = true;
+        String request = TEST_WORKSPACE_NAME
+                + "/"
+                + buildGetMap(directWMSIntegrationEndpoint, localName, "EPSG:4326", null, tileLayer)
+                + "&tiled=true";
+
+        MockHttpServletResponse response = getAsServletResponse(request);
+
+        assertEquals(200, response.getStatusCode());
+        assertEquals("image/png", response.getContentType());
+        assertEquals(qualifiedName, response.getHeader("geowebcache-layer"));
+        assertThat(response.getHeader("geowebcache-cache-result"), equalToIgnoringCase("MISS"));
+        
+        MockHttpServletResponse response2 = getAsServletResponse(request);
+        assertEquals(200, response2.getStatusCode());
+        assertEquals("image/png", response2.getContentType());
+        assertEquals(qualifiedName, response2.getHeader("geowebcache-layer"));
+        assertThat(response2.getHeader("geowebcache-cache-result"), equalToIgnoringCase("HIT"));
+    }
 
     @Test public void testDirectWMSIntegrationWithVirtualServicesHiddenLayer() throws Exception {
         /*
@@ -576,9 +645,9 @@ public class GWCIntegrationTest extends GeoServerSystemTestSupport {
         quota.setQuotaStore("H2");
         gwc.saveDiskQuotaConfig(quota, null);
         GeoServerDataDirectory dd = GeoServerExtensions.bean(GeoServerDataDirectory.class);
-        File jdbcConfigFile = dd.findDataFile("gwc/geowebcache-diskquota-jdbc.xml");
+        File jdbcConfigFile = dd.findFile("gwc/geowebcache-diskquota-jdbc.xml");
         assertNull("jdbc config should not be there", jdbcConfigFile);
-        File h2DefaultStore = dd.findDataFile("gwc/diskquota_page_store_h2");
+        File h2DefaultStore = dd.findFile("gwc/diskquota_page_store_h2");
         assertNotNull("jdbc store should be there", h2DefaultStore);
         assertTrue(getActualStore(provider) instanceof JDBCQuotaStore);
         
@@ -602,7 +671,7 @@ public class GWCIntegrationTest extends GeoServerSystemTestSupport {
         pool.setMaxOpenPreparedStatements(50);
         jdbc.setConnectionPool(pool);
         gwc.saveDiskQuotaConfig(quota, jdbc);
-        jdbcConfigFile = dd.findDataFile("gwc/geowebcache-diskquota-jdbc.xml");
+        jdbcConfigFile = dd.findFile("gwc/geowebcache-diskquota-jdbc.xml");
         assertNotNull("jdbc config should be there", jdbcConfigFile);
         assertNull("jdbc store should be there", dd.findDataFile("gwc/diskquota_page_store_h2"));
         File newQuotaStore = new File("./target/quota-h2.data.db");
@@ -663,5 +732,46 @@ public class GWCIntegrationTest extends GeoServerSystemTestSupport {
         getGeoServer().reload();
         // grab the config, make sure it was saved as expected
         assertEquals(100, GWC.get().getConfig().getGutter());
+    }
+    
+    @Test
+    public void testRenameWorkspace() throws Exception {
+        String wsName = MockData.CITE_PREFIX;
+        String wsRenamed = MockData.CITE_PREFIX + "Renamed";
+        Catalog catalog = getCatalog();
+        WorkspaceInfo ws = catalog.getWorkspaceByName(wsName);
+        
+        try {
+            // collect all the layer names that are in the CITE workspace
+            List<String> layerNames = new ArrayList<String>();
+            for (LayerInfo layer : catalog.getLayers()) {
+                if(wsName.equals(layer.getResource().getStore().getWorkspace().getName())) {
+                    String prefixedName = layer.prefixedName();
+                    try {
+                        // filter out geometryless layers and other stuff that cannot be hanlded by GWC
+                        GWC.get().getTileLayerByName(prefixedName);
+                        layerNames.add(layer.getName());
+                    } catch(IllegalArgumentException e) {
+                        // fine, we are skipping layers that cannot be handled
+                    }
+                }
+            }
+            
+            // rename the workspace
+            
+            ws.setName(wsRenamed);
+            catalog.save(ws);
+            
+            // check all the preview layers have been renamed too
+            for (String name : layerNames) {
+                String prefixedName = wsRenamed + ":" + name; 
+                GWC.get().getTileLayerByName(prefixedName);
+            }
+        } finally {
+            if(wsRenamed.equals(ws.getName())) {
+                ws.setName(wsName);
+                catalog.save(ws);
+            }
+        }
     }
 }
