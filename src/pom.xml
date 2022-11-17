@@ -1535,7 +1535,7 @@
   <gt.version>13-SNAPSHOT</gt.version>
   <gwc.version>1.7-SNAPSHOT</gwc.version>
   <spring.version>3.1.4.RELEASE</spring.version>
-  <spring.security.version>3.1.0.RELEASE</spring.security.version> 
+  <spring.security.version>5.5.7</spring.security.version> 
   <poi.version>3.8</poi.version>
   <wicket.version>1.4.12</wicket.version>
   <ant.version>1.8.4</ant.version>
