@@ -6,7 +6,7 @@ package org.geoserver.security.keycloak;
 
 import org.geoserver.security.config.BaseSecurityNamedServiceConfig;
 
-/** Extension of {@link SecurityNamedServiceConfig} */
+/** Extension of {@link BaseSecurityNamedServiceConfig} */
 public class KeycloakSecurityServiceConfig extends BaseSecurityNamedServiceConfig {
 
     private String serverURL;

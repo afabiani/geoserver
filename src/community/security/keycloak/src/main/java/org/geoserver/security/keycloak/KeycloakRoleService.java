@@ -85,7 +85,7 @@ public class KeycloakRoleService extends AbstractGeoServerSecurityService implem
 
     @Override
     public GeoServerRole getAdminRole() {
-        if (StringUtils.hasLength(adminRoleName) == false) return null;
+        if (!StringUtils.hasLength(adminRoleName)) return null;
         try {
             return getRoleByName(adminRoleName);
         } catch (IOException e) {
@@ -95,7 +95,7 @@ public class KeycloakRoleService extends AbstractGeoServerSecurityService implem
 
     @Override
     public GeoServerRole getGroupAdminRole() {
-        if (StringUtils.hasLength(groupAdminRoleName) == false) return null;
+        if (!StringUtils.hasLength(groupAdminRoleName)) return null;
         try {
             return getRoleByName(groupAdminRoleName);
         } catch (IOException e) {

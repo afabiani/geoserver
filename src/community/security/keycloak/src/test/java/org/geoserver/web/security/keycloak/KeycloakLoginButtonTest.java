@@ -16,7 +16,6 @@ import org.geoserver.security.GeoServerSecurityManager;
 import org.geoserver.security.RequestFilterChain;
 import org.geoserver.security.config.SecurityManagerConfig;
 import org.geoserver.security.keycloak.GeoServerKeycloakFilter;
-import org.geoserver.security.keycloak.GeoServerKeycloakFilterConfig;
 import org.geoserver.web.GeoServerHomePage;
 import org.geoserver.web.GeoServerWicketTestSupport;
 import org.junit.Test;

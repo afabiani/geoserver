@@ -127,9 +127,6 @@ class KeycloakUrlBuilder {
      * @return the access token endpoint.
      */
     String buildTokenEndpoint() {
-        StringBuilder sb = new StringBuilder(serverUrl);
-        sb.append("/auth/realms/").append(realm);
-        String result = sb.append("/protocol/openid-connect/token").toString();
-        return result;
+        return serverUrl + "/auth/realms/" + realm + "/protocol/openid-connect/token";
     }
 }

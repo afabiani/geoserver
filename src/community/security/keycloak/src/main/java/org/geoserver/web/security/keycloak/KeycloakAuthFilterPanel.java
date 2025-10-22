@@ -10,7 +10,6 @@ import java.util.logging.Logger;
 import org.apache.wicket.markup.html.form.CheckBox;
 import org.apache.wicket.markup.html.form.TextArea;
 import org.apache.wicket.model.IModel;
-import org.geoserver.security.keycloak.GeoServerKeycloakFilterConfig;
 import org.geoserver.security.web.auth.PreAuthenticatedUserNameFilterPanel;
 import org.geoserver.web.wicket.HelpLink;
 import org.geotools.util.logging.Logging;

@@ -6,7 +6,6 @@ package org.geoserver.web.security.keycloak;
 
 import java.io.Serial;
 import org.geoserver.security.keycloak.GeoServerKeycloakFilter;
-import org.geoserver.security.keycloak.GeoServerKeycloakFilterConfig;
 import org.geoserver.security.web.auth.AuthenticationFilterPanelInfo;
 
 public class KeycloakAuthFilterPanelInfo
